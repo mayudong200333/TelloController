@@ -17,7 +17,7 @@ INTERVAL = 0.2
 class TelloController(object):
     def __init__(self,host_ip='192.168.10.2',host_port=8889,
                  drone_ip='192.168.10.1',drone_port=8889,
-                 is_imperial=False, speed = DEFAULT_SPEED):
+                 is_imperial=False, speed = DEFAULT_SPEED , receive_state=True):
         self.host_ip = host_ip
         self.host_port = host_port
         self.drone_ip = drone_ip
@@ -26,6 +26,9 @@ class TelloController(object):
         self.speed = speed
         self.socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         self.socket.bind((self.host_ip,self.host_port))
+
+        self.socket2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket2.bind((self.host_ip, 8890))
 
 
         self.response = None
@@ -42,6 +45,11 @@ class TelloController(object):
         self.send_command('command')
         self.send_command('streamon')
 
+        if receive_state:  # for receive the drone state
+            self.socket2.sendto('command'.encode('utf-8'), self.drone_address)
+            self._state_thread = threading.Thread(target=self.receive_state,args=(self.stop_event,))
+            self._state_thread.start()
+
     def receive_response(self,stop_event):
         while not stop_event.is_set():
             try:
@@ -53,21 +61,21 @@ class TelloController(object):
                               'ex':ex})
                 break
 
-    def receive_state(self):
-        socket2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        socket2.bind((self.host_ip, 8890))
-        socket2.sendto('command'.encode('utf-8'), self.drone_address)
-        index = 0
-        while True:
-            index += 1
-            response, ip = socket2.recvfrom(1024)
-            if response == 'ok':
-                continue
-            response = response.decode()
-            out = response.replace(';', ';\n')
-            out = 'Tello State:\n' + out
-            logger.info({'action':'receive_state','state':out})
-            sleep(INTERVAL)
+    def receive_state(self,stop_event):
+        while not stop_event.is_set():
+            try:
+                response, ip = self.socket2.recvfrom(1024)
+                if response == 'ok':
+                    continue
+                response = response.decode()
+                out = response.replace(';', ' ')
+                out.split(' ')
+                print(out)
+                sleep(INTERVAL)
+            except socket.error as ex:
+                logger.error({'action': 'receive_response',
+                              'ex': ex})
+                break
 
 
     def __dell__(self):
@@ -76,7 +84,7 @@ class TelloController(object):
     def stop(self):
         self.stop_event.set()
         retry = 0
-        while self._response_thread.isAlive():
+        while self._response_thread.isAlive() or self._state_thread.isAlive():
             time.sleep(0.3)
             if retry > 30:
                 break
@@ -204,7 +212,8 @@ class TelloController(object):
 
 if __name__ == '__main__':
     drone_manage = TelloController()
-
-    drone_manage.receive_state()
-
+    drone_manage.takeoff()
+    sleep(3)
+    drone_manage.land()
+    sleep(3)
     drone_manage.stop()
