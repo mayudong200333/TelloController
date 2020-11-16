@@ -3,8 +3,8 @@ import contextlib
 import socket
 import sys
 import threading
-import time
 from time import sleep
+import re
 
 logging.basicConfig(level=logging.INFO,stream=sys.stdout)
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_DISTANCE = 0.30
 DEFAULT_SPEED = 10
 DEFAULT_DEGREE = 10
-INTERVAL = 0.2
+INTERVAL = 0.05
 
 class TelloController(object):
     def __init__(self,host_ip='192.168.10.2',host_port=8889,
@@ -30,7 +30,6 @@ class TelloController(object):
         self.socket2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket2.bind((self.host_ip, 8890))
 
-
         self.response = None
         self.stop_event = threading.Event()
         self._response_thread = threading.Thread(target=self.receive_response,
@@ -44,6 +43,31 @@ class TelloController(object):
 
         self.send_command('command')
         self.send_command('streamon')
+
+        self.pitch_now = None
+        self.roll_now = None
+        self.yaw_now = None
+
+        self.vgx_now = None
+        self.vgy_now = None
+        self.vgz_now = None
+
+        self.agx_now = None
+        self.agy_now = None
+        self.agz_now = None
+
+        self.pitch = []
+        self.roll = []
+        self.yaw = []
+
+        self.vx = []
+        self.vy = []
+
+        # for log the path
+        self.islog_path = True
+        self.px = [0,]
+        self.py = [0,]
+
 
         if receive_state:  # for receive the drone state
             self.socket2.sendto('command'.encode('utf-8'), self.drone_address)
@@ -68,9 +92,32 @@ class TelloController(object):
                 if response == 'ok':
                     continue
                 response = response.decode()
+                #print(response)
                 out = response.replace(';', ' ')
-                out.split(' ')
-                print(out)
+                out = re.findall(r'[+-]?\d+', out)
+                #log the pitch,roll yaw
+                self.pitch.append(float(out[0]))
+                self.roll.append(float(out[1]))
+                self.yaw.append(float(out[2]))
+                #log the vx and vy
+                self.vx.append(float(out[3]))
+                self.vy.append(float(out[4]))
+                #get the pitch roll yaw and vx,vy,vz,ax,ay,az now
+                self.pitch_now = float(out[0])
+                self.roll_now = float(out[1])
+                self.yaw_now = float(out[2])
+                self.vgx_now = float(out[3])
+                self.vgy_now = float(out[4])
+                self.vgz_now = float(out[5])
+                self.agx_now = float(out[13])
+                self.agy_now = float(out[14])
+                self.agz_now = float(out[15])
+                #log the path
+                if self.islog_path:
+                    x_new = self.px[-1] + INTERVAL * float(self.vgx_now) + INTERVAL ** 2 / 2 * float(self.agx_now)
+                    y_new = self.py[-1] + INTERVAL * float(self.vgy_now) + INTERVAL ** 2 / 2 * float(self.agy_now)
+                    self.px.append(x_new)
+                    self.py.append(y_new)
                 sleep(INTERVAL)
             except socket.error as ex:
                 logger.error({'action': 'receive_response',
@@ -85,7 +132,7 @@ class TelloController(object):
         self.stop_event.set()
         retry = 0
         while self._response_thread.isAlive() or self._state_thread.isAlive():
-            time.sleep(0.3)
+            sleep(0.3)
             if retry > 30:
                 break
             retry += 1
@@ -97,8 +144,8 @@ class TelloController(object):
 
         retry = 0
         while self.response is None:
-            time.sleep(0.3)
-            if retry > 3:
+            #sleep(0.3)
+            if retry == 0:
                 break
             retry += 1
 
@@ -180,7 +227,7 @@ class TelloController(object):
             self.patrol_event.set()
             retry = 0
             while self._thread_patrol.isAlive():
-                time.sleep(0.3)
+                sleep(0.3)
                 if retry > 300:
                     break
                 retry += 1
@@ -203,7 +250,7 @@ class TelloController(object):
                         self.down()
                     if status == 4:
                         status = 0
-                    time.sleep(5)
+                    sleep(5)
         else:
             logger.warning({'action':'_patrol','status':'not_acquire'})
 
@@ -212,8 +259,18 @@ class TelloController(object):
 
 if __name__ == '__main__':
     drone_manage = TelloController()
+
     drone_manage.takeoff()
-    sleep(3)
+    sleep(5)
+    drone_manage.set_rc(20,20,0,0)
+    sleep(0.2)
+    drone_manage.set_rc(-20,-20,0,0)
+    sleep(0.2)
     drone_manage.land()
-    sleep(3)
     drone_manage.stop()
+
+
+
+
+
+
